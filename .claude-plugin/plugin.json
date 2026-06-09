@@ -1,0 +1,8 @@
+{
+  "name": "daily-retro",
+  "version": "0.2.0",
+  "description": "Nightly cross-project continuous-improvement retrospective for Claude Code: gathers everything from a day's sessions, runs a 3-lens council, and (optionally) auto-applies the top improvements as skills/CLAUDE.md rules with a dedup gate.",
+  "author": { "name": "LynchzDEV" },
+  "homepage": "https://github.com/LynchzDEV/claude-daily-retro",
+  "keywords": ["retrospective", "continuous-improvement", "self-improvement", "scheduler", "council"]
+}

@@ -1,0 +1,11 @@
+{
+  "name": "lynchzdev",
+  "owner": { "name": "LynchzDEV" },
+  "plugins": [
+    {
+      "name": "daily-retro",
+      "source": "./",
+      "description": "Nightly continuous-improvement retrospective + optional 18:00 scheduler."
+    }
+  ]
+}

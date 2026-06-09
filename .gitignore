@@ -1,0 +1,6 @@
+# Per-user runtime output — never commit
+retro/
+config.env
+skills/daily-retro/registry.json
+*.log
+.DS_Store

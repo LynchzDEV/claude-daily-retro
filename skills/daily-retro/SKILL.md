@@ -1,0 +1,125 @@
+---
+name: daily-retro
+description: Use when running the end-of-day self-improvement pass (the scheduled retro job), when asked to retrospect on or review what happened across today's Claude sessions, when recurring corrections / friction / repeated instructions across sessions should be turned into new or improved skills and CLAUDE.md rules, or when invoked as /daily-retro [YYYY-MM-DD] [apply|propose]. Cross-project, all repos.
+---
+
+# daily-retro
+
+Continuous-improvement loop. Three steps. Runs over ONE target date across ALL projects.
+
+**Args:** `/daily-retro [DATE] [MODE]`
+- `DATE` — `YYYY-MM-DD`. If absent, use today.
+- `MODE` — `apply` (default) or `propose`.
+  - `apply`  → Step 3 modifies global `~/.claude/CLAUDE.md`, bumps the changelog, writes the registry.
+  - `propose` → Step 3 modifies NOTHING. It writes ranked recommendations to `03-proposals.md` for human review. Use this when you do not want unattended edits to your config.
+
+**Scope**: global / cross-project. Do NOT limit to one repo.
+
+Paths (absolute):
+- Output dir:      `~/.claude/retro/<DATE>/`
+- Global rules:    `~/.claude/CLAUDE.md`
+- Changelog:       `~/.claude/IMPR-CHANGELOG.md`
+- Dedup registry:  `~/.claude/skills/daily-retro/registry.json`
+- Skills root:     `~/.claude/skills/`
+- Project memory:  `~/.claude/projects/*/memory/`
+- Raw transcripts: `~/.claude/projects/*/*.jsonl`
+
+Create TodoWrite with the 3 steps before starting. Do them in order. Each step writes its file before the next begins.
+
+---
+
+## Step 1 — GATHER (no judgment, max detail, 1 list-item per scenario)
+
+Goal: a flat, exhaustive, NON-judgmental list of everything that happened across every session of `<DATE>`. Pure observation. No "why", no fix, no rating. Each scenario = one list item.
+
+Pull from all three sources, merge, dedup near-identical events. Sources are ordered by headless reliability — transcripts are the source of truth, so this works even if claude-mem is unavailable in the unattended run:
+
+1. **Raw transcripts (backbone)** — find `~/.claude/projects/*/*.jsonl` whose lines are dated `<DATE>` (filter on the `timestamp` field of each JSONL line; the scheduled run is the next morning at earliest, so do not rely on mtime alone). EXCLUDE noise dirs like `*claude-mem-observer-sessions*`. Walk every project dir. Scan for, and capture VERBATIM where possible:
+   - user interruptions / stop events — `[Request interrupted by user]`
+   - corrections ("no", "nope", "I told you", "don't", "instead", "stop")
+   - repeated instructions — count repeats
+   - denied/rejected tool calls — `The user doesn't want to proceed with this tool use`
+   - redo / rework loops
+   - moments the user expressed friction, confusion, or approval
+   - record which `PROJECT` (repo dir) each event came from
+2. **Built-in memory** — `~/.claude/projects/*/memory/*.md` whose body/frontmatter references `<DATE>` (especially `type: feedback` and `type: decision`).
+3. **claude-mem (optional enrichment)** — IF the claude-mem MCP tools are available this run, use `timeline` filtered to `<DATE>` then `get_observations([ids])` to add summarized framing. If unavailable, skip silently.
+
+Write `~/.claude/retro/<DATE>/01-events.md`:
+
+```
+# Events — <DATE>
+
+Source coverage: transcripts(<n> files) | memory(<n> files)
+
+- [E01] WHAT: <what happened> | PROJECT: <repo> | CONTEXT: <what Claude was doing> | SIGNAL: <user stopped/corrected/repeated xN/approved/decided> | QUOTE: "<verbatim or —>"
+- [E02] ...
+```
+
+Rules: one scenario per line, stable id `E01..En`. Detailed but do NOT invent (missing field → `—`). No interpretation. Include positives too.
+
+---
+
+## Step 2 — COUNCIL (3 lenses, scrum retrospective)
+
+Read `01-events.md`. Run a council over EVERY event using **3 subagents in parallel** (Agent tool, `general-purpose`), each a distinct lens. For large event sets, each lens processes all events through its single perspective; you then synthesize.
+
+1. **Historian** — confirm exactly what happened and the precise trigger.
+2. **Root-cause** — why it happened; cross-event PATTERNS (shared root causes).
+3. **Action-engineer** — how to respond next time, how to prevent, and the concrete artifact (SKILL / CLAUDE_RULE / HOOK / NONE), with IMPACT and FREQUENCY.
+
+Synthesize the three lenses into `~/.claude/retro/<DATE>/02-council.md` — every event id × every answer:
+
+```
+# Council — <DATE>
+
+## [E01] <short title>
+- What:    <historian>
+- Why:     <root-cause + class>
+- Respond: <action-engineer>
+- Prevent: <action-engineer>
+- Action:  <SKILL:<name> | CLAUDE_RULE:<one-liner> | HOOK:<desc> | NONE>
+- Impact:  <high|med|low>  Frequency: <count>
+
+## Patterns
+- P1 <name> — events: ...
+## Ranked actions
+- <deduped shortlist by Impact x Frequency, marking NEW vs IMPROVEMENT>
+```
+
+---
+
+## Step 3 — ACT (top 3, WITH dedup gate)
+
+Read `01-events.md` + `02-council.md`. Rank by `Impact × Frequency`. Take **top 3** with a non-NONE Action.
+
+### Dedup gate (mandatory — improve, never duplicate)
+Before creating anything:
+1. Read `registry.json` — created before?
+2. `ls ~/.claude/skills/` + read candidate SKILL.md frontmatter — does a skill already cover this?
+3. `grep ~/.claude/CLAUDE.md` — does a rule already cover this?
+4. Search `~/.claude/projects/*/memory/` for an existing note.
+
+**If a covering artifact EXISTS → IMPROVE it in place. Only if nothing covers it → CREATE new.**
+
+### Conflict gate
+If a proposed rule contradicts an existing hand-written user rule, DO NOT blind-write it. Either re-scope it so it refines rather than contradicts, or defer it (record under `_deferred`) and note the conflict.
+
+### Apply — BRANCH ON MODE
+**If MODE = propose:** write the top 3 (with dedup/conflict findings and exact proposed diffs) to `~/.claude/retro/<DATE>/03-proposals.md`. Make NO changes to CLAUDE.md, changelog, registry, or skills. Stop after writing it.
+
+**If MODE = apply:**
+- Skill-worthy & not covered → create `~/.claude/skills/<name>/SKILL.md` (follow writing-skills conventions). Covered → improve existing.
+- Rule-worthy → append/refine a rule in `~/.claude/CLAUDE.md` under a clearly demarcated `## Continuous-improvement rules (auto-maintained by daily-retro)` section. NEVER edit the user's hand-written rules; only add/maintain within that section. Cite the retro date + event ids in each rule.
+- Record every change in `registry.json`:
+  ```json
+  { "<artifact-key>": { "type": "skill|claude_rule|hook", "name": "...",
+    "created": "<DATE>", "updated": ["<DATE>"], "source_events": ["E0x"],
+    "summary": "..." } }
+  ```
+- Bump `~/.claude/IMPR-CHANGELOG.md` (semver): **minor** = new skill/hook created; **patch** = only improvements/rules.
+
+---
+
+## Finish
+Print a short summary: date, mode, #events, top-3 actions (created vs improved vs proposed), new version. In `apply` mode the scheduler wrapper writes the `.done` marker on exit code 0 — do not write it yourself.
