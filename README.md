@@ -30,6 +30,11 @@ It's the loop that makes your Claude setup get better while you sleep.
 Runs unattended via a scheduler (macOS launchd / Linux cron) at a time you pick, with a
 **7-day catch-up** so a powered-off evening isn't lost.
 
+**Reliability:** the wrapper is rate-limit aware — if the nightly run dies on a usage/session
+limit it parses the advertised reset time, waits (bounded), and retries up to 3×. Step outputs
+carry a completion sentinel, so a retry **resumes** at the step that died instead of redoing the
+whole retro. A lock dir prevents overlapping runs (RunAtLoad + schedule + manual).
+
 > No `--dangerously-skip-permissions`. It runs headless with `--permission-mode acceptEdits`
 > and an explicit tool allowlist.
 
@@ -84,6 +89,19 @@ Start with `propose`, read a few nights of output, then switch to `apply` if you
 
 ---
 
+## How it keeps itself honest
+
+- **Recurrence escalation** — every event is checked against the rules the retro already wrote.
+  If an existing rule should have prevented an event, that's a recurrence: the rule failed as
+  prose. 2+ recurrences escalates it up the enforcement ladder (rule → sharpened rule → hook).
+- **Deferred revisit** — actions parked in the registry's `_deferred` list (blocked tooling,
+  project-specific routing) are re-checked every run and promoted the moment their blocker clears.
+- **Consolidation** — the auto-maintained CLAUDE.md section is loaded into every session's
+  context, so growth is capped: past 10 rules the retro merges overlapping rules and retires
+  zero-recurrence stale ones (their text is archived in the registry, never lost).
+
+---
+
 ## ⚠️ Before you trust apply mode
 
 - It **edits your global `~/.claude/CLAUDE.md`** — affecting every project. It only writes
@@ -93,7 +111,10 @@ Start with `propose`, read a few nights of output, then switch to `apply` if you
   and `skills/daily-retro/SKILL.md` first.
 - It reads your **session transcripts** locally. Nothing is sent anywhere beyond your normal
   Claude Code usage.
-- Token cost: a full nightly run spawns several sub-agents. `propose` and `apply` cost the same.
+- Token cost: quiet days (<10 events) run with no sub-agents; busy days spawn at most 3.
+  `propose` and `apply` cost the same. You can pin a cheaper model for retro runs
+  (`RETRO_MODEL="sonnet"` in `config.env`) to spare your premium quota — the run shares
+  your account rate limit.
 
 ---
 
@@ -123,7 +144,7 @@ systemctl --user enable --now daily-retro.timer
 ```
 ~/.claude/skills/daily-retro/SKILL.md        the 3-step skill
 ~/.claude/skills/daily-retro/run.sh          scheduler wrapper (catch-up)
-~/.claude/skills/daily-retro/config.env      your wizard choices
+~/.claude/skills/daily-retro/config.env      your wizard choices (mode, schedule, model pin, retry policy)
 ~/.claude/skills/daily-retro/registry.json   dedup manifest
 ~/.claude/retro/<date>/                       per-day outputs
 ~/.claude/IMPR-CHANGELOG.md                   versioned action log
