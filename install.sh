@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # daily-retro install wizard.
 # Interactive: lets you choose mode, schedule time, catch-up depth, history
-# seeding, and scheduler backend. Re-runnable (idempotent).
+# seeding, model pin, and scheduler backend. Re-runnable (idempotent).
 set -uo pipefail
 
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -28,6 +28,14 @@ fi
 say "Found claude: ${c_g}$CLAUDE_BIN${c_0}"
 OS="$(uname -s)"
 say "OS: ${c_g}$OS${c_0}"
+
+# node is needed by Claude Code hooks (SessionEnd etc.) inside the headless run.
+NODE_BIN="$(command -v node || true)"
+if [ -n "$NODE_BIN" ]; then
+  say "Found node:   ${c_g}$NODE_BIN${c_0} (hooks will work in headless runs)"
+else
+  say "${c_y}node not found on PATH — Claude Code hooks will fail inside scheduled runs.${c_0}"
+fi
 say ""
 
 # --- what it does / consent ---
@@ -64,6 +72,13 @@ RUN_MIN="$(ask "Run minute (0-59)" "0")"
 CATCHUP_DAYS="$(ask "Catch-up days (back-fill missed runs)" "7")"
 say ""
 
+# --- model pin ---
+say "${c_b}Model${c_0}"
+say "  The retro shares your account rate limit. Pinning a cheaper model (e.g."
+say "  'sonnet' or 'haiku') spares your premium quota at the cost of some analysis depth."
+RETRO_MODEL="$(ask "Model for retro runs (empty = account default)" "")"
+say ""
+
 # --- config.env ---
 ALLOWED="Read,Write,Edit,Bash,Grep,Glob,Skill,Agent,Task"
 cat > "$SKILL_DST/config.env" <<CFG
@@ -71,6 +86,10 @@ MODE="$MODE"
 CATCHUP_DAYS=$CATCHUP_DAYS
 RUN_HOUR=$RUN_HOUR
 ALLOWED="$ALLOWED"
+RETRO_MODEL="$RETRO_MODEL"
+RETRY_MAX=3
+RETRY_FALLBACK_MIN=60
+RETRY_CAP_MIN=300
 CFG
 say "Wrote $SKILL_DST/config.env"
 
@@ -105,6 +124,10 @@ case "$OS" in
     if yn "Install macOS launchd job at ${RUN_HOUR}:${RUN_MIN} daily?" "Y"; then
       BIN_DIR="$(dirname "$CLAUDE_BIN")"
       PATHV="$BIN_DIR:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+      # Hooks inside the headless run need node; launchd jobs don't inherit your
+      # shell PATH, so bake the node dir (and mise shims, if any) into the plist.
+      [ -n "$NODE_BIN" ] && PATHV="$(dirname "$NODE_BIN"):$PATHV"
+      [ -d "$HOME/.local/share/mise/shims" ] && PATHV="$HOME/.local/share/mise/shims:$PATHV"
       mkdir -p "$(dirname "$PLIST_DST")"
       sed -e "s|__HOME__|$HOME|g" -e "s|__HOUR__|$RUN_HOUR|g" -e "s|__MINUTE__|$RUN_MIN|g" -e "s|__PATH__|$PATHV|g" \
         "$SELF_DIR/templates/com.claude.daily-retro.plist.template" > "$PLIST_DST"
