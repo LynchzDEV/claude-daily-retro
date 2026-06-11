@@ -99,6 +99,18 @@ Start with `propose`, read a few nights of output, then switch to `apply` if you
 - **Consolidation** — the auto-maintained CLAUDE.md section is loaded into every session's
   context, so growth is capped: past 10 rules the retro merges overlapping rules and retires
   zero-recurrence stale ones (their text is archived in the registry, never lost).
+- **Output validation (0.4.0)** — a day is only marked done after the scheduler verifies all
+  three step files end with their completion sentinel (including the new `03-applied.md`
+  apply-proof). An exit-0 run that stalled mid-step is retried, not silently trusted.
+- **Failure visibility (0.4.0)** — non-rate-limit failures get one automatic retry, then a
+  desktop notification (macOS `osascript` / Linux `notify-send`). No more silently missed nights.
+- **Pending-artifact staging (0.4.0)** — when a scheduled run can't write into a project repo
+  (macOS TCC blocks launchd from `~/Desktop` etc.), the full artifact is staged under
+  `~/.claude/retro/pending/<repo>/` and a SessionStart hook lists it at the start of your next
+  interactive session for one-step installation.
+- **Cost hygiene (0.4.0)** — days with zero transcripts are skipped without invoking Claude,
+  and bulky raw capture files are pruned after `RETENTION_DAYS` (durable knowledge lives in
+  the step files + registry).
 
 ---
 
@@ -148,6 +160,8 @@ systemctl --user enable --now daily-retro.timer
 ~/.claude/skills/daily-retro/registry.json   dedup manifest
 ~/.claude/retro/<date>/                       per-day outputs
 ~/.claude/IMPR-CHANGELOG.md                   versioned action log
+~/.claude/retro/pending/<repo>/               artifacts staged for repos the scheduler can't write
+~/.claude/hooks/retro-pending.sh              SessionStart surfacing hook (registered in settings.json)
 ~/Library/LaunchAgents/com.claude.daily-retro.plist   (macOS)
 ```
 

@@ -1,7 +1,7 @@
 {
   "name": "daily-retro",
-  "version": "0.3.0",
-  "description": "Nightly cross-project continuous-improvement retrospective for Claude Code: gathers everything from a day's sessions, runs a 3-lens council, and (optionally) auto-applies the top improvements as skills/CLAUDE.md rules with dedup, recurrence-escalation, and consolidation gates. Scheduler survives rate limits (auto-retry at reset) and resumes interrupted runs step-by-step.",
+  "version": "0.4.0",
+  "description": "Nightly cross-project continuous-improvement retrospective for Claude Code: gathers everything from a day's sessions, runs a 3-lens council, and (optionally) auto-applies the top improvements as skills/CLAUDE.md rules with dedup, recurrence-escalation, and consolidation gates. Scheduler survives rate limits (auto-retry at reset), validates run output before marking days done, retries generic failures with a desktop notification on final failure, skips session-less days, prunes old raw captures, and resumes interrupted runs step-by-step.",
   "author": {
     "name": "LynchzDEV"
   },
