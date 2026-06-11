@@ -70,6 +70,7 @@ say ""
 RUN_HOUR="$(ask "Run hour (0-23)" "18")"
 RUN_MIN="$(ask "Run minute (0-59)" "0")"
 CATCHUP_DAYS="$(ask "Catch-up days (back-fill missed runs)" "7")"
+RETENTION_DAYS="$(ask "Days to keep bulky raw capture files in retro/<date>/" "30")"
 say ""
 
 # --- model pin ---
@@ -90,6 +91,9 @@ RETRO_MODEL="$RETRO_MODEL"
 RETRY_MAX=3
 RETRY_FALLBACK_MIN=60
 RETRY_CAP_MIN=300
+GENERIC_RETRY_MAX=1
+GENERIC_RETRY_WAIT_MIN=10
+RETENTION_DAYS=$RETENTION_DAYS
 CFG
 say "Wrote $SKILL_DST/config.env"
 
@@ -108,6 +112,46 @@ Semver: minor = new skill/hook; patch = existing artifact / CLAUDE.md rule impro
 CHL
   say "Initialized ~/.claude/IMPR-CHANGELOG.md"
 fi
+
+# --- pending-artifact surfacing (SessionStart hook) ---
+say "${c_b}Pending-artifact surfacing${c_0}"
+say "  Scheduled runs may lack write access to project dirs (macOS TCC). The retro"
+say "  then stages project artifacts under ~/.claude/retro/pending/<repo>/; a small"
+say "  SessionStart hook lists them at the start of your next interactive session."
+if yn "Install the SessionStart surfacing hook (edits ~/.claude/settings.json with backup)?" "Y"; then
+  mkdir -p "$CLAUDE_HOME/hooks" "$RETRO_DIR/pending"
+  cat > "$CLAUDE_HOME/hooks/retro-pending.sh" <<'HOOK'
+#!/bin/bash
+PENDING="$HOME/.claude/retro/pending"
+[ -d "$PENDING" ] || exit 0
+files=$(find "$PENDING" -type f 2>/dev/null)
+[ -n "$files" ] || exit 0
+echo "PENDING daily-retro artifacts staged at ~/.claude/retro/pending/ (install each into its target repo when working in that repo, then delete the staged copy and update the registry _deferred entry):"
+echo "$files" | sed "s|^$PENDING/|  - |"
+exit 0
+HOOK
+  chmod +x "$CLAUDE_HOME/hooks/retro-pending.sh"
+  if command -v python3 >/dev/null 2>&1 && [ -f "$CLAUDE_HOME/settings.json" ]; then
+    cp "$CLAUDE_HOME/settings.json" "$CLAUDE_HOME/settings.json.bak-daily-retro"
+    python3 - "$CLAUDE_HOME/settings.json" "$CLAUDE_HOME/hooks/retro-pending.sh" <<'PY'
+import json, sys
+p, cmd = sys.argv[1], sys.argv[2]
+s = json.load(open(p))
+groups = s.setdefault('hooks', {}).setdefault('SessionStart', [])
+if not any(h.get('command') == cmd for g in groups for h in g.get('hooks', [])):
+    groups.append({'hooks': [{'type': 'command', 'command': cmd, 'timeout': 5}]})
+    json.dump(s, open(p, 'w'), indent=2)
+    print('  registered in settings.json SessionStart (backup: settings.json.bak-daily-retro)')
+else:
+    print('  already registered in settings.json')
+PY
+  else
+    say "  ${c_y}python3 or settings.json missing — register the hook manually (see README).${c_0}"
+  fi
+else
+  say "  skipped. Staged artifacts will still accumulate in $RETRO_DIR/pending/ silently."
+fi
+say ""
 
 # --- seed history markers ---
 days_ago() { if date -v-1d +%F >/dev/null 2>&1; then date -v-"$1"d +%F; else date -d "$1 days ago" +%F; fi; }

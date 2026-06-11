@@ -32,6 +32,10 @@ output file already exists for `<DATE>` AND ends with the sentinel — if so, SK
 the step and reuse the file. If the file exists without the sentinel it is a
 partial write from an interrupted run: redo that step (overwrite). This makes
 retries after a rate-limit kill cheap — typically only the step that died re-runs.
+Step 3's output file is `03-applied.md` (apply mode) or `03-proposals.md` (propose
+mode). The scheduler wrapper validates ALL THREE sentinels before writing the
+`.done` marker — a run that skips writing the step-3 file is treated as failed
+and retried, so always write it, even when zero actions were taken.
 
 ---
 
@@ -141,7 +145,7 @@ Resolved/obsolete → mark it `RESOLVED <date> — <how>`.
 If a proposed rule contradicts an existing hand-written user rule, DO NOT blind-write it. Either re-scope it so it refines rather than contradicts, or defer it (record under `_deferred`) and note the conflict.
 
 ### Apply — BRANCH ON MODE
-**If MODE = propose:** write the top 3 (with dedup/conflict findings and exact proposed diffs) to `~/.claude/retro/<DATE>/03-proposals.md`. Make NO changes to CLAUDE.md, changelog, registry, or skills. Stop after writing it.
+**If MODE = propose:** write the top 3 (with dedup/conflict findings and exact proposed diffs) to `~/.claude/retro/<DATE>/03-proposals.md`, ending with the sentinel. Make NO changes to CLAUDE.md, changelog, registry, or skills. Stop after writing it.
 
 **If MODE = apply:**
 - Skill-worthy & not covered → create `~/.claude/skills/<name>/SKILL.md` (follow writing-skills conventions). Covered → improve existing.
@@ -153,6 +157,19 @@ If a proposed rule contradicts an existing hand-written user rule, DO NOT blind-
     "recurrences": 0, "summary": "..." } }
   ```
 - Bump `~/.claude/IMPR-CHANGELOG.md` (semver): **minor** = new skill/hook created; **patch** = only improvements/rules.
+- **Unwritable project target (sandbox):** when an action needs a file inside a
+  project repo (hookify rule, project skill, repo doc) and the write fails with
+  a permission error (macOS TCC blocks launchd from `~/Desktop` etc.), do NOT
+  just defer it. Write the COMPLETE artifact to
+  `~/.claude/retro/pending/<repo-name>/<relative-path-in-repo>` and record the
+  pointer in the registry `_deferred` entry. A SessionStart hook surfaces
+  pending artifacts in the next interactive session; that session installs them
+  and deletes the staged copy.
+- **LAST, always:** write `~/.claude/retro/<DATE>/03-applied.md` listing exactly
+  what changed (rules added/escalated with their text, skills touched, registry
+  keys, deferred revisits, version bump) and end with the sentinel. Write it
+  ONLY after every change above is applied — the wrapper treats it as the
+  apply-mode completion proof. Zero actions taken → still write it, stating so.
 
 ### Consolidation pass (growth control — apply mode only)
 The auto-maintained section is loaded into EVERY session's context; it must not
@@ -166,4 +183,4 @@ the changelog. Net rule count must DECREASE in a consolidation run.
 ---
 
 ## Finish
-Print a short summary: date, mode, #events, recurrences detected, top-3 actions (created vs improved vs escalated vs proposed), deferred items revisited, new version. In `apply` mode the scheduler wrapper writes the `.done` marker on exit code 0 — do not write it yourself.
+Print a short summary: date, mode, #events, recurrences detected, top-3 actions (created vs improved vs escalated vs proposed), deferred items revisited, new version. The scheduler wrapper writes the `.done` marker only after exit code 0 AND validating the three step sentinels — do not write it yourself.
