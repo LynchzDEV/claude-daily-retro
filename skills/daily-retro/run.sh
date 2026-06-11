@@ -3,8 +3,12 @@
 # past day with no .done marker (covers powered-off misses, not just sleep).
 # Today runs only at/after the configured hour. Rate-limit aware: classifies
 # limit failures, waits until the advertised reset (or a fixed backoff) and
-# retries. Single-instance via a lock dir. No --dangerously-skip-permissions:
-# uses acceptEdits + an explicit allowlist instead.
+# retries. Non-rate-limit failures get one generic retry and a macOS
+# notification on final failure. Days with no transcripts are skipped without
+# invoking Claude. .done is only written after output validation (step
+# sentinels + apply-mode 03-applied.md). Bulky raw capture files are pruned
+# after RETENTION_DAYS. Single-instance via a lock dir.
+# No --dangerously-skip-permissions: uses acceptEdits + an explicit allowlist.
 set -uo pipefail
 
 CLAUDE_HOME="$HOME/.claude"
@@ -22,6 +26,9 @@ RETRO_MODEL=""          # empty = account default; e.g. "sonnet" to spare opus q
 RETRY_MAX=3             # rate-limit retries per date
 RETRY_FALLBACK_MIN=60   # wait when the reset time can't be parsed
 RETRY_CAP_MIN=300       # never wait longer than this for one retry
+GENERIC_RETRY_MAX=1     # retries for non-rate-limit failures (rc!=0 or invalid output)
+GENERIC_RETRY_WAIT_MIN=10
+RETENTION_DAYS=30       # prune bulky raw capture files in day dirs older than this
 # shellcheck disable=SC1090
 [ -f "$CONFIG" ] && . "$CONFIG"
 
@@ -32,6 +39,14 @@ CLAUDE_BIN="$HOME/.local/bin/claude"
 mkdir -p "$RETRO_DIR"
 
 log() { echo "[$(date '+%F %T')] $*" >> "$LOG"; }
+
+notify() {
+  if command -v osascript >/dev/null 2>&1; then
+    osascript -e "display notification \"$1\" with title \"daily-retro\"" >/dev/null 2>&1
+  elif command -v notify-send >/dev/null 2>&1; then
+    notify-send "daily-retro" "$1" >/dev/null 2>&1
+  fi
+}
 
 # --- single-instance lock (mkdir is atomic; stale if owner pid is gone) ---
 acquire_lock() {
@@ -90,6 +105,26 @@ rate_limit_wait_secs() {
   echo $((RETRY_FALLBACK_MIN * 60))
 }
 
+# Any transcript line for this date? (timestamps are ISO: "timestamp":"YYYY-MM-DD...)
+# Avoids burning a full Claude invocation on session-less days.
+has_sessions() {
+  grep -rls --include='*.jsonl' "\"timestamp\":\"$1" "$CLAUDE_HOME/projects" 2>/dev/null \
+    | grep -v 'claude-mem-observer-sessions' | head -1
+}
+
+# rc=0 from claude -p does not guarantee the retro ran to completion (it can
+# stall on a prompt or die mid-step). Trust only the step sentinels.
+retro_output_valid() {
+  local day_dir="$RETRO_DIR/$1"
+  grep -q 'step-complete' "$day_dir/01-events.md" 2>/dev/null || return 1
+  grep -q 'step-complete' "$day_dir/02-council.md" 2>/dev/null || return 1
+  if [ "$MODE" = "apply" ]; then
+    grep -q 'step-complete' "$day_dir/03-applied.md" 2>/dev/null
+  else
+    grep -q 'step-complete' "$day_dir/03-proposals.md" 2>/dev/null
+  fi
+}
+
 invoke_claude() {
   local d="$1" run_log="$2"
   local model_args=()
@@ -108,28 +143,54 @@ run_for_date() {
   local marker="$day_dir/.done"
   local run_log="$day_dir/run.log"
   [ -f "$marker" ] && return 0
+
+  if [ -z "$(has_sessions "$d")" ]; then
+    mkdir -p "$day_dir"
+    log "SKIP  retro $d — no sessions"
+    echo "no sessions" > "$marker"
+    return 0
+  fi
   mkdir -p "$day_dir"
 
-  local attempt=0 rc wait_s
+  local rl_attempt=0 generic_attempt=0 rc wait_s
   while :; do
-    attempt=$((attempt + 1))
-    log "START retro $d (mode=$MODE attempt=$attempt)"
+    log "START retro $d (mode=$MODE rl_attempt=$rl_attempt generic_attempt=$generic_attempt)"
     invoke_claude "$d" "$run_log"
     rc=$?
-    if [ "$rc" -eq 0 ]; then
+    if [ "$rc" -eq 0 ] && retro_output_valid "$d"; then
       touch "$marker"
       log "DONE  retro $d"
       return 0
     fi
-    if is_rate_limited "$run_log" && [ "$attempt" -le "$RETRY_MAX" ]; then
+    if [ "$rc" -eq 0 ]; then
+      log "INVALID retro $d — rc=0 but step sentinels missing"
+      rc=99
+    fi
+    if is_rate_limited "$run_log" && [ "$rl_attempt" -lt "$RETRY_MAX" ]; then
+      rl_attempt=$((rl_attempt + 1))
       wait_s="$(rate_limit_wait_secs "$run_log")"
-      log "RATE-LIMITED retro $d (rc=$rc) — retry $attempt/$RETRY_MAX in $((wait_s / 60))m"
+      log "RATE-LIMITED retro $d (rc=$rc) — retry $rl_attempt/$RETRY_MAX in $((wait_s / 60))m"
       sleep "$wait_s"
       continue
     fi
-    log "FAIL  retro $d (rc=$rc attempts=$attempt)"
+    if ! is_rate_limited "$run_log" && [ "$generic_attempt" -lt "$GENERIC_RETRY_MAX" ]; then
+      generic_attempt=$((generic_attempt + 1))
+      log "RETRY retro $d (rc=$rc) — generic retry $generic_attempt/$GENERIC_RETRY_MAX in ${GENERIC_RETRY_WAIT_MIN}m"
+      sleep $((GENERIC_RETRY_WAIT_MIN * 60))
+      continue
+    fi
+    log "FAIL  retro $d (rc=$rc rl_attempts=$rl_attempt generic_attempts=$generic_attempt)"
+    notify "Retro $d FAILED (rc=$rc) — see retro/$d/run.log"
     return "$rc"
   done
+}
+
+# Bulky raw capture files (raw-*.txt, user-msgs*.txt) are working scratch; the
+# durable knowledge lives in 01/02/03 + registry. Prune past retention.
+prune_old_raw() {
+  find "$RETRO_DIR" -maxdepth 2 -type f \
+    \( -name 'raw-*' -o -name 'user-msgs*' \) \
+    -mtime +"$RETENTION_DAYS" -delete 2>/dev/null
 }
 
 HOUR=$(date +%H)
@@ -143,3 +204,5 @@ done
 if [ "$((10#$HOUR))" -ge "$((10#$RUN_HOUR))" ]; then
   run_for_date "$(date +%F)"
 fi
+
+prune_old_raw
