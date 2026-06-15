@@ -141,6 +141,15 @@ Unblocked → treat it as a 4th action this run (it pre-paid its analysis).
 Still blocked → leave, but refresh its note with today's date if anything changed.
 Resolved/obsolete → mark it `RESOLVED <date> — <how>`.
 
+**Existing-artifact health re-scan (every run):** run
+`bash ~/.claude/skills/daily-retro/scan-artifacts.sh`. It re-checks every hook
+script wired into `settings.json` for stray control bytes + syntax errors —
+silent rot that the Liveness gate only catches at creation time (this is how a
+live verify-gate.sh sat dead for a day). Any `FAIL` line → open a fix action
+THIS run (strip the bad bytes / fix syntax, re-run until clean), note it in
+`03-applied.md`. A failed re-scan blocks `03-applied.md` from claiming an
+all-clean run.
+
 ### Conflict gate
 If a proposed rule contradicts an existing hand-written user rule, DO NOT blind-write it. Either re-scope it so it refines rather than contradicts, or defer it (record under `_deferred`) and note the conflict.
 
@@ -171,6 +180,9 @@ Smoke-test commands + their output go into `03-applied.md` as proof — same sta
 
 **If MODE = apply:**
 - Skill-worthy & not covered → create `~/.claude/skills/<name>/SKILL.md` (follow writing-skills conventions). Covered → improve existing.
+- **Hook-worthy (executable artifact — highest blast radius, runs every session):** governed by `HOOK_APPROVAL` in `config.env` (default `stage`):
+  - `stage` → write the COMPLETE hook to `~/.claude/retro/pending/hooks/<name>` and add a `_deferred` entry `created-pending-confirm: <why>`. Do NOT wire it into `settings.json` and do NOT bump the version yet. `retro-pending.sh` surfaces it next interactive session; a human-present session smoke-tests it (Liveness gate), copies it into `~/.claude/hooks/`, wires `settings.json`, then deletes the staged copy and flips the registry entry to live + bumps the version. This keeps unattended runs from silently activating executable code in every session.
+  - `auto` → create + wire into `settings.json` this run, but ONLY after it PASSES the Liveness gate in-run; on any gate failure fall back to `stage`.
 - Rule-worthy → append/refine a rule in `~/.claude/CLAUDE.md` under a clearly demarcated `## Continuous-improvement rules (auto-maintained by daily-retro)` section. NEVER edit the user's hand-written rules; only add/maintain within that section. Cite the retro date + event ids in each rule.
 - Record every change in `registry.json`:
   ```json

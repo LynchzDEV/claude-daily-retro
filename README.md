@@ -111,6 +111,21 @@ Start with `propose`, read a few nights of output, then switch to `apply` if you
 - **Cost hygiene (0.4.0)** — days with zero transcripts are skipped without invoking Claude,
   and bulky raw capture files are pruned after `RETENTION_DAYS` (durable knowledge lives in
   the step files + registry).
+- **Liveness gate (0.5.0)** — any executable artifact the retro creates or edits (a hook, a
+  script) must pass a syntax check, a control-byte scan, and a per-branch behavioral smoke
+  test *in the same run* before it can be marked done or bump the version. Reading the code is
+  not a test — this exists because a hook once shipped dead (stray `0x08` bytes silently broke
+  all its regexes) while marked resolved. The retro now obeys its own verify-before-done rule.
+- **Artifact health re-scan (0.5.0)** — `scan-artifacts.sh` re-checks every hook wired into
+  `settings.json` for control-byte rot + syntax errors every run, catching silent decay of
+  *already-shipped* hooks that the creation-time gate can't see. A failure opens a fix action
+  that night.
+- **Hook risk tier (0.5.0)** — `HOOK_APPROVAL` (default `stage`) keeps unattended runs from
+  silently activating code that runs every session: new hooks are staged to
+  `retro/pending/hooks/` for a human-present session to smoke-test and install. Set `auto` to
+  wire them straight in (still gated by the liveness check).
+- **`stats.sh` (0.5.0)** — read-only status report: artifact inventory, escalation pressure
+  (which rules keep failing / are hook-due), deferred queue, run history, current version.
 
 ---
 
@@ -158,6 +173,8 @@ systemctl --user enable --now daily-retro.timer
 ~/.claude/skills/daily-retro/run.sh          scheduler wrapper (catch-up)
 ~/.claude/skills/daily-retro/config.env      your wizard choices (mode, schedule, model pin, retry policy)
 ~/.claude/skills/daily-retro/registry.json   dedup manifest
+~/.claude/skills/daily-retro/scan-artifacts.sh  health re-scan of shipped hooks (control-byte + syntax)
+~/.claude/skills/daily-retro/stats.sh         read-only status report
 ~/.claude/retro/<date>/                       per-day outputs
 ~/.claude/IMPR-CHANGELOG.md                   versioned action log
 ~/.claude/retro/pending/<repo>/               artifacts staged for repos the scheduler can't write
