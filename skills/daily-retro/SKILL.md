@@ -144,6 +144,28 @@ Resolved/obsolete → mark it `RESOLVED <date> — <how>`.
 ### Conflict gate
 If a proposed rule contradicts an existing hand-written user rule, DO NOT blind-write it. Either re-scope it so it refines rather than contradicts, or defer it (record under `_deferred`) and note the conflict.
 
+### Liveness gate (executable artifacts MUST be smoke-tested — applies the verify-before-done rule to the retro itself)
+ANY artifact this run CREATES or EDITS that is executable — a hook script, a
+helper script, anything wired into `settings.json` — must PASS a smoke test in
+this same run before it may be marked RESOLVED, recorded as created, or counted
+toward the version bump. Reading the code is NOT a test (a verify-gate.sh once
+shipped with stray `\x08` bytes mangling all three regexes — the whole hook was
+a silent no-op, yet was marked RESOLVED unverified).
+
+Procedure per executable artifact:
+1. **Syntax check** — `bash -n <script>` for shell; for python, `ast.parse` the file.
+2. **Control-byte scan** — reject any stray control byte (esp. `0x08` backspace, `0x1b` esc) outside `\t`/`\n`:
+   `python3 -c "import sys;d=open(sys.argv[1],'rb').read();bad=[hex(b) for b in d if b<9 or (11<=b<32 and b!=27) or b==127];sys.exit('CONTROL BYTES: '+','.join(bad) if bad else 0)" <script>`
+3. **Behavioral smoke test** — feed synthetic input for EACH branch and assert output:
+   - POSITIVE/trigger path produces the expected effect (e.g. a warn-hook: feed input that should warn → assert the warning text appears),
+   - NEGATIVE path stays silent (feed input that should NOT trigger → assert no output).
+   A hook that can never reach its trigger branch is dead and FAILS this gate.
+4. **Pass → record as created/RESOLVED + bump version. FAIL → leave in `_deferred`
+   as `created-but-unverified: <reason>`, do NOT mark RESOLVED, do NOT bump for it,
+   and state the failure in `03-applied.md`.**
+
+Smoke-test commands + their output go into `03-applied.md` as proof — same standard the verify-gate hook enforces on UI work.
+
 ### Apply — BRANCH ON MODE
 **If MODE = propose:** write the top 3 (with dedup/conflict findings and exact proposed diffs) to `~/.claude/retro/<DATE>/03-proposals.md`, ending with the sentinel. Make NO changes to CLAUDE.md, changelog, registry, or skills. Stop after writing it.
 
